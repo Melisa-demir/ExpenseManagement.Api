@@ -10,6 +10,6 @@ namespace ExpenseManagement.Api.Repositories
         Task AddAsync(Expense expense);
         void Update(Expense expense);
         void Delete(Expense expense);
-        Task<bool> SaveChangeAsync();
+        Task<bool> SaveChangesAsync();
     }
 }
