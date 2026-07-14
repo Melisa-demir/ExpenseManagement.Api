@@ -1,8 +1,15 @@
-﻿namespace ExpenseManagement.Api.DTOs
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace ExpenseManagement.Api.DTOs
 {
     public class RegisterRequestDto
     {
+        [Required]
+        [MinLength(3)]
         public string Username { get; set; } = string.Empty;
+
+        [Required]
+        [MinLength(6)]
         public string Password { get; set; } = string.Empty;
     }
 }

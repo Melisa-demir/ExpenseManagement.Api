@@ -1,47 +1,71 @@
-﻿using ExpenseManagement.Api.DTOs;
+﻿using System.Text.Json;
+using ExpenseManagement.Api.DTOs;
 using ExpenseManagement.Api.Entitites;
 using ExpenseManagement.Api.Enums;
 using ExpenseManagement.Api.Repositories;
-using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.Identity.Client;
+using Microsoft.Extensions.Caching.Distributed;
 
 namespace ExpenseManagement.Api.Services
 {
     public class ExpenseService : IExpenseService
     {
+        private const string CacheKey = "expenses";
+
         private readonly IExpenseRepository _expenseRepository;
-        public ExpenseService(IExpenseRepository expenseRepository)
+        private readonly IDistributedCache _cache;
+
+        public ExpenseService(
+            IExpenseRepository expenseRepository,
+            IDistributedCache cache)
         {
             _expenseRepository = expenseRepository;
+            _cache = cache;
         }
 
         public async Task<List<ExpenseResponseDto>> GetAllAsync()
         {
+            var cachedExpenses = await _cache.GetStringAsync(CacheKey);
+
+            if (!string.IsNullOrEmpty(cachedExpenses))
+            {
+                return JsonSerializer.Deserialize<List<ExpenseResponseDto>>(
+                    cachedExpenses)!;
+            }
+
             var expenses = await _expenseRepository.GetAllAsync();
 
-            return expenses.Select(expense => new ExpenseResponseDto
+            var response = expenses.Select(x => new ExpenseResponseDto
             {
-                Id = expense.Id,
-                UserId = expense.UserId,
-                Title = expense.Title,
-                Description = expense.Description,
-                Amount = expense.Amount,
-                ExpenseDate = expense.ExpenseDate,
-                Category = expense.Category,
-                Status = expense.Status,
-                ManagerNote = expense.ManagerNote,
-                CreatedAt = expense.CreatedAt,
-                UpdatedAt = expense.UpdatedAt
+                Id = x.Id,
+                UserId = x.UserId,
+                Title = x.Title,
+                Description = x.Description,
+                Amount = x.Amount,
+                ExpenseDate = x.ExpenseDate,
+                Category = x.Category,
+                Status = x.Status,
+                ManagerNote = x.ManagerNote,
+                CreatedAt = x.CreatedAt,
+                UpdatedAt = x.UpdatedAt
             }).ToList();
+
+            await _cache.SetStringAsync(
+                CacheKey,
+                JsonSerializer.Serialize(response),
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+                });
+
+            return response;
         }
-        public async Task<ExpenseResponseDto> GetByIdAsync(int id)
+
+        public async Task<ExpenseResponseDto?> GetByIdAsync(int id)
         {
             var expense = await _expenseRepository.GetByIdAsync(id);
 
             if (expense == null)
-            {
                 return null;
-            }
 
             return new ExpenseResponseDto
             {
@@ -58,6 +82,7 @@ namespace ExpenseManagement.Api.Services
                 UpdatedAt = expense.UpdatedAt
             };
         }
+
         public async Task CreateAsync(CreateExpenseDto dto)
         {
             var expense = new Expense
@@ -73,23 +98,17 @@ namespace ExpenseManagement.Api.Services
             };
 
             await _expenseRepository.AddAsync(expense);
-
             await _expenseRepository.SaveChangesAsync();
+
+            await _cache.RemoveAsync(CacheKey);
         }
 
         public async Task<bool> UpdateAsync(int id, UpdateExpenseDto dto)
         {
             var expense = await _expenseRepository.GetByIdAsync(id);
 
-            if(expense == null)
-            {
+            if (expense == null)
                 return false;
-            }
-
-            if(expense.Status != ExpenseStatus.Pending)
-            {
-                return false;
-            }
 
             expense.Title = dto.Title;
             expense.Description = dto.Description;
@@ -100,7 +119,12 @@ namespace ExpenseManagement.Api.Services
 
             _expenseRepository.Update(expense);
 
-            return await _expenseRepository.SaveChangesAsync();
+            var result = await _expenseRepository.SaveChangesAsync();
+
+            if (result)
+                await _cache.RemoveAsync(CacheKey);
+
+            return result;
         }
 
         public async Task<bool> DeleteAsync(int id)
@@ -110,24 +134,21 @@ namespace ExpenseManagement.Api.Services
             if (expense == null)
                 return false;
 
-            if (expense.Status != ExpenseStatus.Pending)
-            {
-                return false;
-            }
-
             _expenseRepository.Delete(expense);
 
-            return await _expenseRepository.SaveChangesAsync();
+            var result = await _expenseRepository.SaveChangesAsync();
+
+            if (result)
+                await _cache.RemoveAsync(CacheKey);
+
+            return result;
         }
 
         public async Task<bool> ApproveAsync(int id)
         {
             var expense = await _expenseRepository.GetByIdAsync(id);
 
-            if (expense == null)
-                return false;
-
-            if (expense.Status != ExpenseStatus.Pending)
+            if (expense == null || expense.Status != ExpenseStatus.Pending)
                 return false;
 
             expense.Status = ExpenseStatus.Approved;
@@ -136,21 +157,24 @@ namespace ExpenseManagement.Api.Services
 
             _expenseRepository.Update(expense);
 
-            return await _expenseRepository.SaveChangesAsync();
+            var result = await _expenseRepository.SaveChangesAsync();
+
+            if (result)
+                await _cache.RemoveAsync(CacheKey);
+
+            return result;
         }
 
         public async Task<bool> RejectAsync(int id, string managerNote)
         {
             var expense = await _expenseRepository.GetByIdAsync(id);
 
-            if (expense == null)
+            if (expense == null ||
+                expense.Status != ExpenseStatus.Pending ||
+                string.IsNullOrWhiteSpace(managerNote))
+            {
                 return false;
-
-            if (expense.Status != ExpenseStatus.Pending)
-                return false;
-
-            if (string.IsNullOrWhiteSpace(managerNote))
-                return false;
+            }
 
             expense.Status = ExpenseStatus.Rejected;
             expense.ManagerNote = managerNote;
@@ -158,8 +182,12 @@ namespace ExpenseManagement.Api.Services
 
             _expenseRepository.Update(expense);
 
-            return await _expenseRepository.SaveChangesAsync();
+            var result = await _expenseRepository.SaveChangesAsync();
+
+            if (result)
+                await _cache.RemoveAsync(CacheKey);
+
+            return result;
         }
     }
 }
-

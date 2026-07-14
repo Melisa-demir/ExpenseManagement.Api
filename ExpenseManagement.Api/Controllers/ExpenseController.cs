@@ -57,6 +57,7 @@ namespace ExpenseManagement.Api.Controllers
             return Ok("Expense updated successfully");
         }
 
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
